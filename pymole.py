@@ -1,13 +1,20 @@
-from flask import Flask, Response
+from flask import Flask, Response, request
 import json
-from inspect import getmembers, isfunction, getsource, getfullargspec
+from inspect import getmembers, isfunction, isgenerator, getsource, getfullargspec
 from importlib import import_module
-import os
+import os, time
+from queue import Queue
 
 app = Flask(__name__)
 
-def jsonify(obj):
-	return Response(json.dumps(obj), mimetype='application/json')
+def respond_json(obj):
+	if isgenerator(obj):
+		return Response((json.dumps(o) for o in obj), mimetype='application/stream+json')
+	else:
+		return Response(json.dumps(obj), mimetype='application/json')
+
+def respond_empty():
+	return Response("{}", mimetype='application/json')
         
 def load_missions(dir='missions'):
 	missions = {}
@@ -29,18 +36,21 @@ def molr_type(pytype):
 		return 'double'
 	else:
 		return 'string'
+		
+def function_block_repr(function):
+	source_lines = getsource(function).rstrip().split('\n')
+	root_block = {'id':'root', 'text':source_lines[0], 'navigable': True}
+	line_blocks = [{'id':num, 'text':line, 'navigable': True} for num,line in enumerate(source_lines[1:])]
+	return {'rootBlockId':root_block['id'], 'blocks':[root_block]+line_blocks,
+	        'childrenBlockIds':{root_block['id']:[l['id'] for l in line_blocks]}}
 
 @app.route("/mission/availableMissions")
 def available_missions():
-	return jsonify({'missionDtoSet': [{'name':mission_name} for mission_name in MISSIONS.keys()]})
+	return respond_json({'missionDtoSet': [{'name':mission_name} for mission_name in MISSIONS.keys()]})
 
 @app.route("/mission/<mission>/representation")
 def mission_representation(mission):
-	source_lines = getsource(MISSIONS[mission]).split('\n')
-	root_block = {'id':'root', 'text':mission, 'navigable': True}
-	line_blocks = [{'id':num, 'text':line, 'navigable': True} for num,line in enumerate(source_lines)]
-	return jsonify({'rootBlockId':root_block['id'], 'blocks':[root_block]+line_blocks,
-	                'childrenBlockIds':{root_block['id']:[l['id'] for l in line_blocks]} })
+	return respond_json(function_block_repr(MISSIONS[mission]))
 
 @app.route("/mission/<mission>/parameterDescription")
 def mission_parameter_description(mission):
@@ -59,31 +69,93 @@ def mission_parameter_description(mission):
 		else:
 			argtype = 'string'
 		
-		parameters.append({'name':arg, 'type': argtype, 'required':(default is None), 'defaultValue': default})
-	return jsonify({'parameters': parameters})
+		parameters.append({'name':arg, 'type': argtype, 'required': True, 'defaultValue': default})
+	return respond_json({'parameters': parameters})
 
 @app.route("/mission/<mission>/instantiate/<handle>", methods=["POST"])
 def instantiate_mission(mission, handle):
-	return Response("{}", mimetype='application/json')
+	if handle in INSTANCES:
+		print("WARN: handle '%s' already in use" % handle)
+		return Response("{}", mimetype='application/json')
+	params = json.loads(request.data.decode('utf-8'))
+	INSTANCES[handle] = MissionInstance(MISSIONS[mission], params)
+	return respond_empty()
 
 @app.route("/instance/<handle>/states")
 def instance_states(handle):
-	return Response("{}", mimetype='application/json')
+	return respond_json(INSTANCES[handle].state())
 
 @app.route("/instance/<handle>/outputs")
 def instance_outputs(handle):
-	return Response("{}", mimetype='application/json')
+	return respond_json(INSTANCES[handle].output())
 
 @app.route("/instance/<handle>/representations")
 def instance_representations(handle):
-	return Response("{}", mimetype='application/json')
+	return respond_json(INSTANCES[handle].representation())
 
-@app.route("/instance/<handle>/instruct/<strand>/<command>", methods=["POST"])
+@app.route("/instance/<handle>/<strand>/instruct/<command>", methods=["POST"])
 def instance_instruct(handle, strand, command):
-	return Response("{}", mimetype='application/json')
+	INSTANCES[handle].instruct(strand, command)
+	return respond_empty()
 
-    
+
+class MissionInstance(object):
+	def __init__(self, function, params):
+		self.function = function
+		self.params = params
+		self.result = None
+		self.obs_representation = Observable(function_block_repr(self.function))
+		blocks = function_block_repr(self.function)['blocks']
+		self.obs_state = Observable({"result":"UNDEFINED",
+		                             "strandAllowedCommands":{"0":["STEP_INTO","STEP_OVER","SKIP","RESUME"]},
+		                             "strandCursorPositions":{"0":blocks[0]},
+		                             "strandRunStates":{"0":"PAUSED"},
+		                             "parentToChildrenStrands":{}, "strands":[{"id":"0"}],
+		                             "blockResults":{block['id']: "UNDEFINED" for block in blocks},
+		                             "blockRunStates":{block['id']: "UNDEFINED" for block in blocks}})
+		self.obs_output = Observable({"blockOutputs":{}})
+		
+	def representation(self):
+		return self.obs_representation.observe()
+
+	def state(self):
+		return self.obs_state.observe()
+		
+	def output(self):
+		return self.obs_output.observe()
+		
+	def instruct(self, strand, command):
+		print("Getting command %s" % command)
+		output = self.obs_output.last_data
+		output['blockOutputs'].setdefault('root',{'stdout':''})['stdout'] += 'Command %s has been sent to strand %s\n' % (strand, command)
+		print(output)
+		self.obs_output.send(output)
+
+class Observable(object):
+	def __init__(self, initial_data):
+		self.observers = []
+		self.last_data = initial_data
+	
+	def observe(self):
+		queue = Queue()
+		self.observers.append(queue)
+		yield self.last_data
+		while True:
+			event = queue.get()
+			if event is None: break
+			else: yield event
+		self.observes.remove(queue)
+	
+	def send(self, data):
+		self.last_data = data
+		for observer in self.observers:
+			observer.put(data)
+	
+	def finish():
+		send(None)	
+				
 if __name__ == '__main__':
 	MISSIONS = load_missions()
+	INSTANCES = {}
 	print("loaded missions!", MISSIONS)
-	app.run(port=8800)
+	app.run(port=8800, threaded=True)
