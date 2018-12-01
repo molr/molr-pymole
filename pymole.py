@@ -127,7 +127,8 @@ class MissionInstance(object):
 	def instruct(self, strand, command):
 		print("Getting command %s" % command)
 		output = self.obs_output.last_data
-		output['blockOutputs'].setdefault('root',{'stdout':''})['stdout'] += 'Command %s has been sent to strand %s\n' % (strand, command)
+		output['blockOutputs'].setdefault('root',{'stdout':''})['stdout'] += \
+			'Command %s has been sent to strand %s\n' % (command, strand)
 		print(output)
 		self.obs_output.send(output)
 
