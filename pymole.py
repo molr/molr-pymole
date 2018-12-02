@@ -4,6 +4,9 @@ from inspect import getmembers, isfunction, isgenerator, getsource, getfullargsp
 from importlib import import_module
 import os, time
 from queue import Queue
+from threading import Thread
+from enum import Enum
+
 
 app = Flask(__name__)
 
@@ -98,23 +101,57 @@ def instance_instruct(handle, strand, command):
 	INSTANCES[handle].instruct(strand, command)
 	return respond_empty()
 
+class RunState(Enum):
+	RUNNING = 1
+	PAUSED = 2
+	FINISHED = 3
+	FAILED = 4
 
 class MissionInstance(object):
-	def __init__(self, function, params):
+	def __init__(self, function, arguments):
 		self.function = function
-		self.params = params
+		self.arguments = arguments
 		self.result = None
 		self.obs_representation = Observable(function_block_repr(self.function))
-		blocks = function_block_repr(self.function)['blocks']
-		self.obs_state = Observable({"result":"UNDEFINED",
-		                             "strandAllowedCommands":{"0":["STEP_INTO","STEP_OVER","SKIP","RESUME"]},
-		                             "strandCursorPositions":{"0":blocks[0]},
-		                             "strandRunStates":{"0":"PAUSED"},
-		                             "parentToChildrenStrands":{}, "strands":[{"id":"0"}],
-		                             "blockResults":{block['id']: "UNDEFINED" for block in blocks},
-		                             "blockRunStates":{block['id']: "UNDEFINED" for block in blocks}})
+		self.run_state = RunState.PAUSED
+		self.obs_state = Observable(self._fake_obs_state())
 		self.obs_output = Observable({"blockOutputs":{}})
-		
+	
+	def _fake_obs_state(self):
+		blocks = function_block_repr(self.function)['blocks']
+		if self.run_state == RunState.PAUSED:
+			return {"result":"UNDEFINED",
+			        "strandAllowedCommands":{"0":["RESUME"]},
+			        "strandCursorPositions":{"0":blocks[0]},
+			        "strandRunStates":{"0":"PAUSED"},
+			        "parentToChildrenStrands":{}, "strands":[{"id":"0"}],
+			        "blockResults":{block['id']: "UNDEFINED" for block in blocks},
+			        "blockRunStates":{block['id']: "UNDEFINED" for block in blocks}}
+		elif self.run_state == RunState.RUNNING:
+			return {"result":"UNDEFINED",
+			        "strandAllowedCommands":{"0":[]},
+			        "strandCursorPositions":{"0":blocks[0]},
+			        "strandRunStates":{"0":"RUNNING"},
+			        "parentToChildrenStrands":{}, "strands":[{"id":"0"}],
+			        "blockResults":{block['id']: "UNDEFINED" for block in blocks},
+			        "blockRunStates":{block['id']: "RUNNING" for block in blocks}}
+		elif self.run_state == RunState.FINISHED:
+			return {"result":"SUCCESS",
+			        "strandAllowedCommands":{"0":[]},
+			        "strandCursorPositions":{"0":blocks[0]},
+			        "strandRunStates":{"0":"FINISHED"},
+			        "parentToChildrenStrands":{}, "strands":[{"id":"0"}],
+			        "blockResults":{block['id']: "SUCCESS" for block in blocks},
+			        "blockRunStates":{block['id']: "FINISHED" for block in blocks}}
+		elif self.run_state == RunState.FAILED:
+			return {"result":"FAILED",
+			        "strandAllowedCommands":{"0":[]},
+			        "strandCursorPositions":{"0":blocks[0]},
+			        "strandRunStates":{"0":"FINISHED"},
+			        "parentToChildrenStrands":{}, "strands":[{"id":"0"}],
+			        "blockResults":{block['id']: "FAILED" for block in blocks},
+			        "blockRunStates":{block['id']: "FINISHED" for block in blocks}}
+	
 	def representation(self):
 		return self.obs_representation.observe()
 
@@ -124,13 +161,35 @@ class MissionInstance(object):
 	def output(self):
 		return self.obs_output.observe()
 		
+	def _append_output(self, topic, data):
+		output = self.obs_output.last_data
+		output['blockOutputs'].setdefault('root',{}).setdefault(topic,'');
+		output['blockOutputs']['root'][topic] += data + "\n"
+		self.obs_output.send(output)
+
 	def instruct(self, strand, command):
 		print("Getting command %s" % command)
-		output = self.obs_output.last_data
-		output['blockOutputs'].setdefault('root',{'stdout':''})['stdout'] += \
-			'Command %s has been sent to strand %s\n' % (command, strand)
-		print(output)
-		self.obs_output.send(output)
+		self._append_output('commands', 'Command %s has been sent to strand %s' % (command, strand))
+		if command == 'RESUME' and self.run_state == RunState.PAUSED:
+			self.run_state = RunState.RUNNING
+			self.obs_state.send(self._fake_obs_state())
+			self.task_thread = Thread(target=self._run_func, name='MissionRunner-'+self.function.__name__)
+			self.task_thread.start()
+	
+	def _run_func(self):
+		try:
+			print("running %s with args %s"%(self.function, self.arguments))
+			result = self.function(**self.arguments)
+			self._append_output('result', str(result))
+			self.run_state = RunState.FINISHED
+		except Exception as ex:
+			print("error running %s: %s"%(self.function, str(ex)))
+			self._append_output('exceptions', str(ex))
+			self.run_state = RunState.FAILED
+		self.obs_state.send(self._fake_obs_state())
+		print("execution finished")
+			
+		
 
 class Observable(object):
 	def __init__(self, initial_data):
@@ -145,7 +204,7 @@ class Observable(object):
 			event = queue.get()
 			if event is None: break
 			else: yield event
-		self.observes.remove(queue)
+		self.observers.remove(queue)
 	
 	def send(self, data):
 		self.last_data = data
