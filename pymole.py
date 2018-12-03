@@ -61,7 +61,7 @@ def mission_parameter_description(mission):
 	parameters = []
 	for i,arg in enumerate(arg_spec.args):
 		if arg_spec.defaults is not None and len(arg_spec.args)-i <= len(arg_spec.defaults):
-			default = arg_spec.defaults[len(arg_spec.defaults)-(len(arg_spec.args)-i)-1]
+			default = arg_spec.defaults[i-(len(arg_spec.args)-len(arg_spec.defaults))]
 		else:
 			default = None
 
@@ -101,11 +101,13 @@ def instance_instruct(handle, strand, command):
 	INSTANCES[handle].instruct(strand, command)
 	return respond_empty()
 
+
 class RunState(Enum):
 	RUNNING = 1
 	PAUSED = 2
 	FINISHED = 3
 	FAILED = 4
+
 
 class MissionInstance(object):
 	def __init__(self, function, arguments):
@@ -122,7 +124,7 @@ class MissionInstance(object):
 		if self.run_state == RunState.PAUSED:
 			return {"result":"UNDEFINED",
 			        "strandAllowedCommands":{"0":["RESUME"]},
-			        "strandCursorPositions":{"0":blocks[0]},
+			        "strandCursorBlockIds":{"0":"root"},
 			        "strandRunStates":{"0":"PAUSED"},
 			        "parentToChildrenStrands":{}, "strands":[{"id":"0"}],
 			        "blockResults":{block['id']: "UNDEFINED" for block in blocks},
@@ -130,7 +132,7 @@ class MissionInstance(object):
 		elif self.run_state == RunState.RUNNING:
 			return {"result":"UNDEFINED",
 			        "strandAllowedCommands":{"0":[]},
-			        "strandCursorPositions":{"0":blocks[0]},
+			        "strandCursorBlockIds":{"0":"root"},
 			        "strandRunStates":{"0":"RUNNING"},
 			        "parentToChildrenStrands":{}, "strands":[{"id":"0"}],
 			        "blockResults":{block['id']: "UNDEFINED" for block in blocks},
@@ -138,7 +140,7 @@ class MissionInstance(object):
 		elif self.run_state == RunState.FINISHED:
 			return {"result":"SUCCESS",
 			        "strandAllowedCommands":{"0":[]},
-			        "strandCursorPositions":{"0":blocks[0]},
+			        "strandCursorBlockIds":{"0":"root"},
 			        "strandRunStates":{"0":"FINISHED"},
 			        "parentToChildrenStrands":{}, "strands":[{"id":"0"}],
 			        "blockResults":{block['id']: "SUCCESS" for block in blocks},
@@ -146,7 +148,7 @@ class MissionInstance(object):
 		elif self.run_state == RunState.FAILED:
 			return {"result":"FAILED",
 			        "strandAllowedCommands":{"0":[]},
-			        "strandCursorPositions":{"0":blocks[0]},
+			        "strandCursorBlockIds":{"0":"root"},
 			        "strandRunStates":{"0":"FINISHED"},
 			        "parentToChildrenStrands":{}, "strands":[{"id":"0"}],
 			        "blockResults":{block['id']: "FAILED" for block in blocks},
@@ -188,8 +190,7 @@ class MissionInstance(object):
 			self.run_state = RunState.FAILED
 		self.obs_state.send(self._fake_obs_state())
 		print("execution finished")
-			
-		
+
 
 class Observable(object):
 	def __init__(self, initial_data):
@@ -211,8 +212,8 @@ class Observable(object):
 		for observer in self.observers:
 			observer.put(data)
 	
-	def finish():
-		send(None)	
+	def finish(self):
+		self.send(None)
 				
 if __name__ == '__main__':
 	MISSIONS = load_missions()
