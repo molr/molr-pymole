@@ -10,15 +10,18 @@ from enum import Enum
 
 app = Flask(__name__)
 
+
 def respond_json(obj):
 	if isgenerator(obj):
 		return Response((json.dumps(o) for o in obj), mimetype='application/stream+json')
 	else:
 		return Response(json.dumps(obj), mimetype='application/json')
 
+
 def respond_empty():
 	return Response("{}", mimetype='application/json')
         
+
 def load_missions(dir='missions'):
 	missions = {}
 	submodules = [s[:-3] for s in os.listdir(dir) if s[-3:] == '.py']
@@ -30,6 +33,7 @@ def load_missions(dir='missions'):
 				missions[submodule+'.'+member[0]] = member[1]
 	return missions
 
+
 def molr_type(pytype):
 	if pytype is bool:
 		return 'boolean'
@@ -40,6 +44,7 @@ def molr_type(pytype):
 	else:
 		return 'string'
 		
+
 def function_block_repr(function):
 	source_lines = getsource(function).rstrip().split('\n')
 	root_block = {'id':'root', 'text':source_lines[0], 'navigable': True}
@@ -47,13 +52,16 @@ def function_block_repr(function):
 	return {'rootBlockId':root_block['id'], 'blocks':[root_block]+line_blocks,
 	        'childrenBlockIds':{root_block['id']:[l['id'] for l in line_blocks]}}
 
+
 @app.route("/mission/availableMissions")
 def available_missions():
 	return respond_json({'missionDtoSet': [{'name':mission_name} for mission_name in MISSIONS.keys()]})
 
+
 @app.route("/mission/<mission>/representation")
 def mission_representation(mission):
 	return respond_json(function_block_repr(MISSIONS[mission]))
+
 
 @app.route("/mission/<mission>/parameterDescription")
 def mission_parameter_description(mission):
@@ -75,6 +83,7 @@ def mission_parameter_description(mission):
 		parameters.append({'name':arg, 'type': argtype, 'required': True, 'defaultValue': default})
 	return respond_json({'parameters': parameters})
 
+
 @app.route("/mission/<mission>/instantiate/<handle>", methods=["POST"])
 def instantiate_mission(mission, handle):
 	if handle in INSTANCES:
@@ -84,6 +93,7 @@ def instantiate_mission(mission, handle):
 	INSTANCES[handle] = MissionInstance(MISSIONS[mission], params)
 	return respond_empty()
 
+
 @app.route("/instance/<handle>/states")
 def instance_states(handle):
 	return respond_json(INSTANCES[handle].state())
@@ -92,9 +102,11 @@ def instance_states(handle):
 def instance_outputs(handle):
 	return respond_json(INSTANCES[handle].output())
 
+
 @app.route("/instance/<handle>/representations")
 def instance_representations(handle):
 	return respond_json(INSTANCES[handle].representation())
+
 
 @app.route("/instance/<handle>/<strand>/instruct/<command>", methods=["POST"])
 def instance_instruct(handle, strand, command):
