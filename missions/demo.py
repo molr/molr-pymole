@@ -1,6 +1,15 @@
 import time
+
 def someTask():
-	return "Hello World"
+	phrase = "Hello"
+	time.sleep(1)
+	phrase += " "
+	time.sleep(2)
+	phrase += "World!"
+	time.sleep(1)
+	print("Happyily debugging me?")
+	time.sleep(1)
+	return phrase
 	
 def sayHello(to='Python'):
 	return "Hello %s"%to

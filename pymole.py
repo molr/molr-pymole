@@ -1,8 +1,8 @@
 from flask import Flask, Response, request
 import json
-from inspect import getmembers, isfunction, isgenerator, getsource, getfullargspec
+from inspect import getmembers, isfunction, isgenerator, getsourcelines, getfullargspec
 from importlib import import_module
-import os, time
+import os, sys
 from queue import Queue
 from threading import Thread
 from enum import Enum
@@ -46,9 +46,10 @@ def molr_type(pytype):
 		
 
 def function_block_repr(function):
-	source_lines = getsource(function).rstrip().split('\n')
+	source = getsourcelines(function)
+	source_lines = [s.rstrip() for s in source[0]]
 	root_block = {'id':'root', 'text':source_lines[0], 'navigable': True}
-	line_blocks = [{'id':num, 'text':line, 'navigable': True} for num,line in enumerate(source_lines[1:])]
+	line_blocks = [{'id':num+source[1]+1, 'text':line, 'navigable': True} for num,line in enumerate(source_lines[1:])]
 	return {'rootBlockId':root_block['id'], 'blocks':[root_block]+line_blocks,
 	        'childrenBlockIds':{root_block['id']:[l['id'] for l in line_blocks]}}
 
@@ -126,17 +127,35 @@ class MissionInstance(object):
 		self.function = function
 		self.arguments = arguments
 		self.result = None
+		self.cursor_pos = 'root'
+		self.executed_blocks = []
 		self.obs_representation = Observable(function_block_repr(self.function))
 		self.run_state = RunState.PAUSED
 		self.obs_state = Observable(self._fake_obs_state())
 		self.obs_output = Observable({"blockOutputs":{}})
-	
+
+	def _block_state(self, block):
+		if block['id'] == self.cursor_pos:
+			return "RUNNING"
+		elif block['id'] in self.executed_blocks:
+			return "FINISHED"
+		else:
+			return "UNDEFINED"
+
+	def _block_result(self, block):
+		if block['id'] == self.cursor_pos:
+			return "UNDEFINED"
+		elif block['id'] in self.executed_blocks:
+			return "SUCCESS"
+		else:
+			return "UNDEFINED"
+
 	def _fake_obs_state(self):
 		blocks = function_block_repr(self.function)['blocks']
 		if self.run_state == RunState.PAUSED:
 			return {"result":"UNDEFINED",
 			        "strandAllowedCommands":{"0":["RESUME"]},
-			        "strandCursorBlockIds":{"0":"root"},
+			        "strandCursorBlockIds":{"0":self.cursor_pos},
 			        "strandRunStates":{"0":"PAUSED"},
 			        "parentToChildrenStrands":{}, "strands":[{"id":"0"}],
 			        "blockResults":{block['id']: "UNDEFINED" for block in blocks},
@@ -144,15 +163,15 @@ class MissionInstance(object):
 		elif self.run_state == RunState.RUNNING:
 			return {"result":"UNDEFINED",
 			        "strandAllowedCommands":{"0":[]},
-			        "strandCursorBlockIds":{"0":"root"},
+			        "strandCursorBlockIds":{"0":self.cursor_pos},
 			        "strandRunStates":{"0":"RUNNING"},
 			        "parentToChildrenStrands":{}, "strands":[{"id":"0"}],
-			        "blockResults":{block['id']: "UNDEFINED" for block in blocks},
-			        "blockRunStates":{block['id']: "RUNNING" for block in blocks}}
+			        "blockResults":{block['id']:self._block_result(block) for block in blocks},
+			        "blockRunStates":{block['id']:self._block_state(block) for block in blocks}}
 		elif self.run_state == RunState.FINISHED:
 			return {"result":"SUCCESS",
 			        "strandAllowedCommands":{"0":[]},
-			        "strandCursorBlockIds":{"0":"root"},
+			        "strandCursorBlockIds":{"0":self.cursor_pos},
 			        "strandRunStates":{"0":"FINISHED"},
 			        "parentToChildrenStrands":{}, "strands":[{"id":"0"}],
 			        "blockResults":{block['id']: "SUCCESS" for block in blocks},
@@ -160,7 +179,7 @@ class MissionInstance(object):
 		elif self.run_state == RunState.FAILED:
 			return {"result":"FAILED",
 			        "strandAllowedCommands":{"0":[]},
-			        "strandCursorBlockIds":{"0":"root"},
+			        "strandCursorBlockIds":{"0":self.cursor_pos},
 			        "strandRunStates":{"0":"FINISHED"},
 			        "parentToChildrenStrands":{}, "strands":[{"id":"0"}],
 			        "blockResults":{block['id']: "FAILED" for block in blocks},
@@ -189,11 +208,25 @@ class MissionInstance(object):
 			self.obs_state.send(self._fake_obs_state())
 			self.task_thread = Thread(target=self._run_func, name='MissionRunner-'+self.function.__name__)
 			self.task_thread.start()
-	
+
+	def _trace_func(self, frame, event, arg):
+		if event == 'call':
+			if frame.f_code == self.function.__code__:
+				return self._trace_func
+			else:
+				return None # for step into ... later
+		elif event == 'line':
+			self.executed_blocks.append(self.cursor_pos)
+			self.cursor_pos = frame.f_lineno
+			self.obs_state.send(self._fake_obs_state())
+		print("trace %s -- %s" % (event, frame))
+
 	def _run_func(self):
 		try:
 			print("running %s with args %s"%(self.function, self.arguments))
+			sys.settrace(self._trace_func)
 			result = self.function(**self.arguments)
+			sys.settrace(None)
 			self._append_output('result', str(result))
 			self.run_state = RunState.FINISHED
 		except Exception as ex:
