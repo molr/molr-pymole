@@ -4,7 +4,7 @@ from inspect import getmembers, isfunction, isgenerator, getsourcelines, getfull
 from importlib import import_module
 import os, sys
 from queue import Queue
-from threading import Thread
+from threading import Thread, Condition
 from enum import Enum
 
 
@@ -117,9 +117,22 @@ def instance_instruct(handle, strand, command):
 
 class RunState(Enum):
 	RUNNING = 1
-	PAUSED = 2
-	FINISHED = 3
-	FAILED = 4
+	STEPPING_INTO = 2
+	STEPPING_OVER = 3
+	STEPPING_OUT = 4
+	PAUSED = 5
+	FINISHED = 6
+	FAILED = 7
+	
+	def is_running(self):
+		return self in [RunState.RUNNING, RunState.STEPPING_INTO,
+		                RunState.STEPPING_OVER, RunState.STEPPING_OUT]
+	
+	def is_paused(self):
+		return self in [RunState.PAUSED]
+		
+	def is_active(self):
+		return self.is_running() or self.is_paused()
 
 
 class MissionInstance(object):
@@ -129,21 +142,38 @@ class MissionInstance(object):
 		self.result = None
 		self.cursor_pos = 'root'
 		self.executed_blocks = []
-		self.obs_representation = Observable(function_block_repr(self.function))
 		self.run_state = RunState.PAUSED
+		self.obs_representation = Observable(function_block_repr(self.function))
 		self.obs_state = Observable(self._fake_obs_state())
 		self.obs_output = Observable({"blockOutputs":{}})
+		self.task_thread_command_lck = Condition()
+		self.task_thread = Thread(target=self._run_func, name='MissionRunner-'+self.function.__name__)
+		self.task_thread.start()
 
-	def _block_state(self, block):
-		if block['id'] == self.cursor_pos:
+	def _run_state_commands(self):
+		if self.run_state.is_paused():
+			return ["RESUME", "STEP_OVER"]
+		else:
+			return ["PAUSE"]
+			
+	def _run_state_str(self):
+		if self.run_state.is_running():
 			return "RUNNING"
+		elif self.run_state.is_paused():
+			return "PAUSED"
+		else:
+			return "UNDEFINED"
+		
+	def _block_state(self, block):
+		if block['id'] == self.cursor_pos or block['id'] == 'root':
+			return self._run_state_str()
 		elif block['id'] in self.executed_blocks:
 			return "FINISHED"
 		else:
 			return "UNDEFINED"
 
 	def _block_result(self, block):
-		if block['id'] == self.cursor_pos:
+		if block['id'] == self.cursor_pos or block['id'] == 'root':
 			return "UNDEFINED"
 		elif block['id'] in self.executed_blocks:
 			return "SUCCESS"
@@ -151,20 +181,12 @@ class MissionInstance(object):
 			return "UNDEFINED"
 
 	def _fake_obs_state(self):
-		blocks = function_block_repr(self.function)['blocks']
-		if self.run_state == RunState.PAUSED:
+		blocks = self.obs_representation.last_data['blocks']
+		if self.run_state.is_active():
 			return {"result":"UNDEFINED",
-			        "strandAllowedCommands":{"0":["RESUME"]},
+			        "strandAllowedCommands":{"0":self._run_state_commands()},
 			        "strandCursorBlockIds":{"0":self.cursor_pos},
-			        "strandRunStates":{"0":"PAUSED"},
-			        "parentToChildrenStrands":{}, "strands":[{"id":"0"}],
-			        "blockResults":{block['id']: "UNDEFINED" for block in blocks},
-			        "blockRunStates":{block['id']: "UNDEFINED" for block in blocks}}
-		elif self.run_state == RunState.RUNNING:
-			return {"result":"UNDEFINED",
-			        "strandAllowedCommands":{"0":[]},
-			        "strandCursorBlockIds":{"0":self.cursor_pos},
-			        "strandRunStates":{"0":"RUNNING"},
+			        "strandRunStates":{"0":self._run_state_str()},
 			        "parentToChildrenStrands":{}, "strands":[{"id":"0"}],
 			        "blockResults":{block['id']:self._block_result(block) for block in blocks},
 			        "blockRunStates":{block['id']:self._block_state(block) for block in blocks}}
@@ -203,23 +225,36 @@ class MissionInstance(object):
 	def instruct(self, strand, command):
 		print("Getting command %s" % command)
 		self._append_output('commands', 'Command %s has been sent to strand %s' % (command, strand))
-		if command == 'RESUME' and self.run_state == RunState.PAUSED:
-			self.run_state = RunState.RUNNING
-			self.obs_state.send(self._fake_obs_state())
-			self.task_thread = Thread(target=self._run_func, name='MissionRunner-'+self.function.__name__)
-			self.task_thread.start()
+		with self.task_thread_command_lck:
+			if self.run_state.is_paused():
+				if command == 'RESUME':
+					self.run_state = RunState.RUNNING
+				elif command == 'STEP_OVER':
+					self.run_state = RunState.STEPPING_OVER
+				print("setting run_state = %s" % self.run_state)
+				self.task_thread_command_lck.notify()
+			elif self.run_state == RunState.RUNNING:
+				if command == 'PAUSE':
+					self.run_state = RunState.PAUSED
 
 	def _trace_func(self, frame, event, arg):
-		if event == 'call':
-			if frame.f_code == self.function.__code__:
-				return self._trace_func
-			else:
-				return None # for step into ... later
-		elif event == 'line':
-			self.executed_blocks.append(self.cursor_pos)
-			self.cursor_pos = frame.f_lineno
-			self.obs_state.send(self._fake_obs_state())
 		print("trace %s -- %s" % (event, frame))
+		with self.task_thread_command_lck:
+			if event == 'call':
+				if frame.f_code == self.function.__code__:
+					return self._trace_func
+				else:
+					return None # for step into ... later
+			elif event == 'line':
+				self.executed_blocks.append(self.cursor_pos)
+				self.cursor_pos = frame.f_lineno
+				if self.run_state == RunState.STEPPING_OVER or self.run_state == RunState.STEPPING_INTO:
+					self.run_state = RunState.PAUSED
+			while self.run_state.is_paused():
+				self.obs_state.send(self._fake_obs_state())
+				self.task_thread_command_lck.wait()
+			self.obs_state.send(self._fake_obs_state())
+			print("trace: executing next")
 
 	def _run_func(self):
 		try:
