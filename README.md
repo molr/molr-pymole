@@ -6,9 +6,10 @@ This code is still experimental. Currently implemented features:
 - Arguments/Parameters
 - Inspection (lines of codes as blocks)
 - Cursor updates (through python ```sys.settrace()```)
-- Run, Pause, Step Over
+- Run, Pause, Step Over, including loops
 
 Missing:
 - Step into, Step out
 - multi-threaded / multi-stranded missions
 - redirection of stdout/stderr?
+- better exception handling - single lines failing etc.
