@@ -20,7 +20,7 @@ def respond_json(obj):
 
 def respond_empty():
 	return Response("{}", mimetype='application/json')
-        
+
 
 def load_missions(dir='missions'):
 	missions = {}
