@@ -26,7 +26,7 @@ def mole(missions):
 
 
 def test_mission_list(mole, missions):
-    mission_dto = json.loads(mole.get("/mission/availableMissions").data)
+    mission_dto = json.loads(mole.get("/mission/availableMissions").data.decode('utf-8'))
     assert 'missionDtoSet' in mission_dto
     mole_missions = [m['name'] for m in mission_dto['missionDtoSet']]
     assert set(mole_missions) == set(missions.keys())
@@ -37,13 +37,13 @@ def test_mission_params(mole):
     assert 'parameters' in mission_params
     assert mission_params['parameters'] == [{'name': 'someParam', 'type': 'integer',
                                             'required': True, 'defaultValue': None}]
-    mission_params = json.loads(mole.get("/mission/mission2/parameterDescription").data)
+    mission_params = json.loads(mole.get("/mission/mission2/parameterDescription").data.decode('utf-8'))
     assert 'parameters' in mission_params
     assert mission_params['parameters'] == [{'name': 'm', 'type': 'string', 'required': True, 'defaultValue': '42'}]
 
 def test_mission_representation(mole, missions):
     for mission_name in missions.keys():
-        mission_repr = json.loads(mole.get("/mission/%s/representation"%mission_name).data)
+        mission_repr = json.loads(mole.get("/mission/%s/representation"%mission_name).data.decode('utf-8'))
         assert 'rootBlockId' in mission_repr
         assert 'blocks' in mission_repr
         assert 'childrenBlockIds' in mission_repr
