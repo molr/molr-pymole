@@ -33,7 +33,7 @@ def test_mission_list(mole, missions):
 
 
 def test_mission_params(mole):
-    mission_params = json.loads(mole.get("/mission/mission1/parameterDescription").data)
+    mission_params = json.loads(mole.get("/mission/mission1/parameterDescription").data.decode('utf-8'))
     assert 'parameters' in mission_params
     assert mission_params['parameters'] == [{'name': 'someParam', 'type': 'integer',
                                             'required': True, 'defaultValue': None}]
