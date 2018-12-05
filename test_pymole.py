@@ -21,19 +21,31 @@ def missions():
 def mole(missions):
     pymole.MISSIONS = missions
     pymole.INSTANCES = {}
+    pymole.send_states_update()
     mole = pymole.app.test_client()
     return mole
 
 
+def get_json(mole, url):
+    return json.loads(mole.get(url).data.decode('utf-8'))
+
+
+def get_json_stream(mole, url):
+    for update in mole.get(url).iter_encoded():
+        yield json.loads(update.decode('utf-8'))
+
+
 def test_mission_list(mole, missions):
-    mission_dto = json.loads(mole.get("/mission/availableMissions").data.decode('utf-8'))
-    assert 'missionDtoSet' in mission_dto
-    mole_missions = [m['name'] for m in mission_dto['missionDtoSet']]
+    mission_dto = next(get_json_stream(mole, "/states"))
+    assert 'availableMissions' in mission_dto
+    mole_missions = [m['name'] for m in mission_dto['availableMissions']]
     assert set(mole_missions) == set(missions.keys())
+    assert 'activeMissions' in mission_dto
+    assert len(mission_dto['activeMissions']) == 0
 
 
 def test_mission_params(mole):
-    mission_params = json.loads(mole.get("/mission/mission1/parameterDescription").data.decode('utf-8'))
+    mission_params = get_json(mole, "/mission/mission1/parameterDescription")
     assert 'parameters' in mission_params
     assert mission_params['parameters'] == [{'name': 'someParam', 'type': 'integer',
                                             'required': True, 'defaultValue': None}]
@@ -41,9 +53,10 @@ def test_mission_params(mole):
     assert 'parameters' in mission_params
     assert mission_params['parameters'] == [{'name': 'm', 'type': 'string', 'required': True, 'defaultValue': '42'}]
 
+
 def test_mission_representation(mole, missions):
     for mission_name in missions.keys():
-        mission_repr = json.loads(mole.get("/mission/%s/representation"%mission_name).data.decode('utf-8'))
+        mission_repr = get_json(mole, "/mission/%s/representation"%mission_name)
         assert 'rootBlockId' in mission_repr
         assert 'blocks' in mission_repr
         assert 'childrenBlockIds' in mission_repr

@@ -1,8 +1,7 @@
+import os, sys, json, uuid
 from flask import Flask, Response, request
-import json
 from inspect import getmembers, isfunction, isgenerator, getsourcelines, getfullargspec
 from importlib import import_module
-import os, sys
 from queue import Queue
 from threading import Thread, Condition
 from enum import Enum
@@ -20,6 +19,32 @@ def respond_json(obj):
 
 def respond_empty():
 	return Response("{}", mimetype='application/json')
+
+
+class Observable(object):
+	def __init__(self, initial_data):
+		self.observers = []
+		self.last_data = initial_data
+
+	def observe(self):
+		queue = Queue()
+		self.observers.append(queue)
+		yield self.last_data
+		while True:
+			event = queue.get()
+			if event is None:
+				break
+			else:
+				yield event
+		self.observers.remove(queue)
+
+	def send(self, data):
+		self.last_data = data
+		for observer in self.observers:
+			observer.put(data)
+
+	def finish(self):
+		self.send(None)
 
 
 def load_missions(dir='missions'):
@@ -54,9 +79,16 @@ def function_block_repr(function):
 	        'childrenBlockIds':{root_block['id']:[l['id'] for l in line_blocks]}}
 
 
-@app.route("/mission/availableMissions")
-def available_missions():
-	return respond_json({'missionDtoSet': [{'name':mission_name} for mission_name in MISSIONS.keys()]})
+STATE = Observable({'availableMissions':[], 'missionInstances': []})
+
+def send_states_update():
+	STATE.send({'availableMissions': [{'name':mission_name} for mission_name in MISSIONS.keys()],
+				'activeMissions': [{'handle': handle, 'mission':instance.mission_name}
+								   for handle, instance in INSTANCES.items()]})
+
+@app.route("/states")
+def mole_state():
+	return respond_json(STATE.observe())
 
 
 @app.route("/mission/<mission>/representation")
@@ -85,14 +117,13 @@ def mission_parameter_description(mission):
 	return respond_json({'parameters': parameters})
 
 
-@app.route("/mission/<mission>/instantiate/<handle>", methods=["POST"])
-def instantiate_mission(mission, handle):
-	if handle in INSTANCES:
-		print("WARN: handle '%s' already in use" % handle)
-		return Response("{}", mimetype='application/json')
+@app.route("/mission/<mission>/instantiate", methods=["POST"])
+def instantiate_mission(mission):
+	handle = mission + '-' + uuid.uuid1().hex
 	params = json.loads(request.data.decode('utf-8'))
-	INSTANCES[handle] = MissionInstance(MISSIONS[mission], params)
-	return respond_empty()
+	INSTANCES[handle] = MissionInstance(mission, MISSIONS[mission], params)
+	send_states_update()
+	return respond_json({'id': handle})
 
 
 @app.route("/instance/<handle>/states")
@@ -112,6 +143,11 @@ def instance_representations(handle):
 @app.route("/instance/<handle>/<strand>/instruct/<command>", methods=["POST"])
 def instance_instruct(handle, strand, command):
 	INSTANCES[handle].instruct(strand, command)
+	return respond_empty()
+
+@app.route("/instance/<handle>/instructRoot/<command>", methods=["POST"])
+def instance_instruct_root(handle, command):
+	INSTANCES[handle].instruct("0", command)
 	return respond_empty()
 
 
@@ -136,7 +172,8 @@ class RunState(Enum):
 
 
 class MissionInstance(object):
-	def __init__(self, function, arguments):
+	def __init__(self, mission_name, function, arguments):
+		self.mission_name = mission_name
 		self.function = function
 		self.arguments = arguments
 		self.result = None
@@ -272,31 +309,9 @@ class MissionInstance(object):
 		print("execution finished")
 
 
-class Observable(object):
-	def __init__(self, initial_data):
-		self.observers = []
-		self.last_data = initial_data
-	
-	def observe(self):
-		queue = Queue()
-		self.observers.append(queue)
-		yield self.last_data
-		while True:
-			event = queue.get()
-			if event is None: break
-			else: yield event
-		self.observers.remove(queue)
-	
-	def send(self, data):
-		self.last_data = data
-		for observer in self.observers:
-			observer.put(data)
-	
-	def finish(self):
-		self.send(None)
-				
 if __name__ == '__main__':
 	MISSIONS = load_missions()
 	INSTANCES = {}
 	print("loaded missions!", MISSIONS)
+	send_states_update()
 	app.run(port=8800, threaded=True)
