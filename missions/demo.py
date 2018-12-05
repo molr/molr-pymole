@@ -10,12 +10,21 @@ def someTask():
 	print("Happyily debugging me?")
 	time.sleep(1)
 	return phrase
-	
+
+
 def sayHello(to='Python'):
 	return "Hello %s"%to
-	
+
+
 def aThirdTask(howmany=10):
 	for i in range(0,howmany):
 		print("I'm a mole on a secret mission! %d" % i)
 		time.sleep(1)
 	return "Success!"
+
+
+def metaTask():
+	someTask()
+	sayHello(to="Michi")
+	aThirdTask(5)
+	someTask()
