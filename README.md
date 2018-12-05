@@ -11,6 +11,7 @@ This code is still experimental. Currently implemented features:
 - Run, Pause, Step Over, including loops
 
 Missing:
+- inspection of nested missions (multi level tree)
 - Step into, Step out
 - multi-threaded / multi-stranded missions
 - redirection of stdout/stderr?
