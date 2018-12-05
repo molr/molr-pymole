@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.com/molr/molr-pymole.svg?branch=master)](https://travis-ci.com/molr/molr-pymole)
+
 This is a first attempt of a pure python mole implementation. Currently, it looks for python modules in the 'missions'
 subdirectory, and exposes any functions of these modules as missions.
 
