@@ -302,6 +302,7 @@ class MissionInstance(object):
 			self._append_output('result', str(result))
 			self.run_state = RunState.FINISHED
 		except Exception as ex:
+			sys.settrace(None)
 			print("error running %s: %s"%(self.function, str(ex)))
 			self._append_output('exceptions', str(ex))
 			self.run_state = RunState.FAILED
