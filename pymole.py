@@ -1,4 +1,4 @@
-import os, sys, json, uuid
+import os, sys, json, uuid, ast
 from flask import Flask, Response, request
 from inspect import getmembers, isfunction, isgenerator, getsourcelines, getfullargspec
 from importlib import import_module
@@ -52,10 +52,16 @@ def load_missions(dir='missions'):
 	submodules = [s[:-3] for s in os.listdir(dir) if s[-3:] == '.py']
 	print(submodules)
 	for submodule in submodules:
-		sub = import_module(dir+'.'+submodule)
-		for member in getmembers(sub):
-			if isfunction(member[1]):
-				missions[submodule+'.'+member[0]] = member[1]
+		sub_file = dir+'/'+submodule+'.py'
+		with open(sub_file,'r') as sub_fd:
+			sub_source = sub_fd.read()
+		sub_ast = ast.parse(sub_source)
+		sub_code = compile(sub_ast, sub_file, 'exec')
+		sub_globals = {}
+		exec(sub_code, sub_globals)
+		for name,member in sub_globals.items():
+			if isfunction(member):
+				missions[submodule+'.'+name] = member
 	return missions
 
 
