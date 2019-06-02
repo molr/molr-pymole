@@ -12,7 +12,7 @@ app = Flask(__name__)
 
 def respond_json(obj):
 	if isgenerator(obj):
-		return Response((json.dumps(o) for o in obj), mimetype='application/stream+json')
+		return Response(obj, mimetype='text/event-stream')
 	else:
 		return Response(json.dumps(obj), mimetype='application/json')
 
@@ -22,29 +22,43 @@ def respond_empty():
 
 
 class Observable(object):
+	END_STREAM = None
+
 	def __init__(self, initial_data):
 		self.observers = []
-		self.last_data = initial_data
+		self.last_data = Observable.__format_data(initial_data)
 
 	def observe(self):
 		queue = Queue()
 		self.observers.append(queue)
-		yield self.last_data
+		Observable.__publish(self.last_data, queue)
 		while True:
 			event = queue.get()
-			if event is None:
+			if event is Observable.END_STREAM:
 				break
 			else:
 				yield event
 		self.observers.remove(queue)
 
 	def send(self, data):
+		data = Observable.__format_data(data)
 		self.last_data = data
 		for observer in self.observers:
-			observer.put(data)
+			Observable.__publish(data, observer)
 
 	def finish(self):
-		self.send(None)
+		self.send(Observable.END_STREAM)
+
+	@staticmethod
+	def __format_data(data):
+		if data is not Observable.END_STREAM:
+			data = 'data: {}\n'.format(json.dumps(data))
+		return data
+
+	@staticmethod
+	def __publish(data, queue):
+		queue.put(data)
+		queue.put('\n')
 
 
 def load_missions(dir='missions'):
