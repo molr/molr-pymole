@@ -26,7 +26,7 @@ class Observable(object):
 
 	def __init__(self, initial_data):
 		self.observers = []
-		self.last_data = Observable.__format_data(initial_data)
+		self.last_data = initial_data
 
 	def observe(self):
 		queue = Queue()
@@ -41,7 +41,6 @@ class Observable(object):
 		self.observers.remove(queue)
 
 	def send(self, data):
-		data = Observable.__format_data(data)
 		self.last_data = data
 		for observer in self.observers:
 			Observable.__publish(data, observer)
@@ -57,8 +56,8 @@ class Observable(object):
 
 	@staticmethod
 	def __publish(data, queue):
-		queue.put(data)
-		queue.put('\n')
+		queue.put(Observable.__format_data(data))
+		queue.put('\n')  # Need this for EventSource to work
 
 
 def load_missions(dir='missions'):
