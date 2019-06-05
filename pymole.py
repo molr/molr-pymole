@@ -12,7 +12,7 @@ app = Flask(__name__)
 
 def respond_json(obj):
 	if isgenerator(obj):
-		return Response(obj, mimetype='text/event-stream')
+		return Response(('data: {0}\n\n'.format(json.dumps(o)) for o in obj), mimetype='text/event-stream')
 	else:
 		return Response(json.dumps(obj), mimetype='application/json')
 
@@ -31,7 +31,7 @@ class Observable(object):
 	def observe(self):
 		queue = Queue()
 		self.observers.append(queue)
-		Observable.__publish(self.last_data, queue)
+		queue.put(self.last_data)
 		while True:
 			event = queue.get()
 			if event is Observable.END_STREAM:
@@ -43,21 +43,10 @@ class Observable(object):
 	def send(self, data):
 		self.last_data = data
 		for observer in self.observers:
-			Observable.__publish(data, observer)
+			observer.put(data)
 
 	def finish(self):
 		self.send(Observable.END_STREAM)
-
-	@staticmethod
-	def __format_data(data):
-		if data is not Observable.END_STREAM:
-			data = 'data: {}\n'.format(json.dumps(data))
-		return data
-
-	@staticmethod
-	def __publish(data, queue):
-		queue.put(Observable.__format_data(data))
-		queue.put('\n')  # Need this for EventSource to work
 
 
 def load_missions(dir='missions'):

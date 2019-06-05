@@ -33,8 +33,8 @@ def get_json(mole, url):
 def get_json_stream(mole, url):
     for update in mole.get(url).iter_encoded():
         update = update.decode('utf-8')
-        if update != '\n':
-            yield json.loads(update[5:])  # Ignore "data: " prefixed  with the json content
+        assert update.startswith('data: ')
+        yield json.loads(update[5:])  # Ignore "data: " prefixed  with the json content
 
 
 def post_json(mole, url, data={}):
