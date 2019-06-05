@@ -12,7 +12,7 @@ app = Flask(__name__)
 
 def respond_json(obj):
 	if isgenerator(obj):
-		return Response((json.dumps(o) for o in obj), mimetype='application/stream+json')
+		return Response(('data: {0}\n\n'.format(json.dumps(o)) for o in obj), mimetype='text/event-stream')
 	else:
 		return Response(json.dumps(obj), mimetype='application/json')
 
@@ -22,6 +22,8 @@ def respond_empty():
 
 
 class Observable(object):
+	END_STREAM = None
+
 	def __init__(self, initial_data):
 		self.observers = []
 		self.last_data = initial_data
@@ -29,10 +31,10 @@ class Observable(object):
 	def observe(self):
 		queue = Queue()
 		self.observers.append(queue)
-		yield self.last_data
+		queue.put(self.last_data)
 		while True:
 			event = queue.get()
-			if event is None:
+			if event is Observable.END_STREAM:
 				break
 			else:
 				yield event
@@ -44,7 +46,7 @@ class Observable(object):
 			observer.put(data)
 
 	def finish(self):
-		self.send(None)
+		self.send(Observable.END_STREAM)
 
 
 def load_missions(dir='missions'):
