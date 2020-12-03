@@ -207,7 +207,7 @@ class MissionInstance(object):
 		elif self.run_state.is_paused():
 			return "PAUSED"
 		else:
-			return "UNDEFINED"
+			return "NOT_STARTED"
 		
 	def _block_state(self, block):
 		if block['id'] == self.cursor_pos or block['id'] == 'root':
@@ -215,7 +215,7 @@ class MissionInstance(object):
 		elif block['id'] in self.executed_blocks:
 			return "FINISHED"
 		else:
-			return "UNDEFINED"
+			return "NOT_STARTED"
 
 	def _block_result(self, block):
 		if block['id'] == self.cursor_pos or block['id'] == 'root':
